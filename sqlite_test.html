@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Using SQLite in PyScript</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="stylesheet" href="https://pyscript.net/releases/2024.10.2/core.css">
+    <script type="module" src="https://pyscript.net/releases/2024.10.2/core.js"></script>
+    <script type="module" src="./jswasm/sqlite3-worker1-promiser.mjs"></script>
+    <script src="./coi-serviceworker.js"></script>
+</head>
+<body>
+    <main>
+        <script type="mpy">
+import js
+import asyncio
+from collections import namedtuple
+from pyscript import display, ffi
+
+async def initialize_SQLite():
+
+    dbtype = namedtuple("dbtype", ["id", "exec", "close", "promiser"])
+
+    js.Function("window.AsyncFunction = Object.getPrototypeOf(async function(){}).constructor").call()
+    await js.AsyncFunction("window.sqlite3_promiser = await sqlite3Worker1Promiser.v2({});").call()
+
+    _promiser = js.AsyncFunction("method", "params", "return await window.sqlite3_promiser(method, params)")
+
+    async def promiser_func(method, params = None):
+        if params is None:
+            return await _promiser.call(None, method, ffi.to_js({}))
+        else:
+            return await _promiser.call(None, method, ffi.to_js(params))
+
+
+    async def close_func(dbId):
+        return await promiser("close", {
+            "dbId": dbId,
+        });
+
+
+    async def exec_func(dbId, sql, option = None):
+        queryopt = {
+            "dbId": dbId,
+            "sql": sql,
+        }
+
+        if option is not None:
+            queryopt.update(option)
+
+        return await promiser("exec", queryopt);
+
+    exec = exec_func
+    close = close_func
+    promiser = promiser_func
+
+    async def start_func():
+        nonlocal exec, close, promiser
+
+        openResponse = await promiser("open", {
+            "filename": "file:mydb.sqlite3?vfs=opfs",
+        });
+
+        dbId = openResponse;
+
+        idresult = openResponse.result.filename
+
+        return dbtype(dbId.dbId, exec, close, promiser)
+
+    return start_func
+
+
+dbstart = await initialize_SQLite()
+db = await dbstart()
+
+response = await db.exec(db.id, "DROP TABLE IF EXISTS users");
+response = await db.exec(db.id, "CREATE TABLE IF NOT EXISTS users(id INTEGER, name TEXT)");
+response = await db.exec(db.id, "INSERT INTO users VALUES(1, 'Alice')");
+response = await db.exec(db.id, "INSERT INTO users VALUES(?, ?)", {"bind": [2, "Bob"]});
+values = await db.exec(db.id, "SELECT * FROM users", {"rowMode": "object", "returnValue": "resultRows"});
+
+# show results
+js.console.log(values.result.resultRows);
+
+await db.close(db.id)
+        </script>
+    </main>
+</body>
+</html>
